@@ -1,0 +1,19 @@
+{
+  "name": "school-ms",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "db:generate": "pnpm --filter @school/database generate",
+    "db:migrate": "pnpm --filter @school/database migrate",
+    "db:seed": "pnpm --filter @school/database seed",
+    "db:studio": "pnpm --filter @school/database studio",
+    "docker:dev": "docker compose -f docker/docker-compose.yml up -d",
+    "docker:prod": "docker compose -f docker/docker-compose.prod.yml up -d --build"
+  },
+  "devDependencies": { "turbo": "^2.3.0", "typescript": "^5.6.3" },
+  "engines": { "node": ">=20" }
+}

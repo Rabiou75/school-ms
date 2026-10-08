@@ -1,0 +1,488 @@
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
+const root = process.cwd();
+const put = (p, c) => {
+  const full = join(root, p);
+  mkdirSync(dirname(full), { recursive: true });
+  writeFileSync(full, c, 'utf8');
+  console.log('  + ' + p);
+};
+
+// ---------- shared schema ----------
+put('packages/shared/src/schemas/attendance.ts', `import { z } from 'zod';
+
+export const attendanceStatuses = ['PRESENT', 'ABSENT', 'LATE', 'EXCUSED'] as const;
+
+export const markAttendanceSchema = z.object({
+  studentId: z.string().min(1),
+  date: z.string(),
+  status: z.enum(attendanceStatuses),
+  remarks: z.string().optional(),
+});
+
+export const bulkAttendanceSchema = z.object({
+  classId: z.string().min(1),
+  date: z.string(),
+  status: z.enum(attendanceStatuses).default('PRESENT'),
+});
+
+export type MarkAttendanceDto = z.infer<typeof markAttendanceSchema>;
+export type BulkAttendanceDto = z.infer<typeof bulkAttendanceSchema>;
+`);
+
+put('packages/shared/src/index.ts', `export * from './schemas/auth';
+export * from './schemas/student';
+export * from './schemas/finance';
+export * from './schemas/attendance';
+export * from './constants';
+`);
+
+// ---------- attendance service ----------
+put('apps/api/src/attendance/attendance.service.ts', `import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { MarkAttendanceDto, BulkAttendanceDto } from '@school/shared';
+
+@Injectable()
+export class AttendanceService {
+  constructor(private prisma: PrismaService) {}
+
+  async sheet(schoolId: string, date: string, classId?: string) {
+    const where: any = { schoolId, isActive: true };
+    if (classId) where.classId = classId;
+    const students = await this.prisma.student.findMany({
+      where,
+      include: { class: true },
+      orderBy: [{ class: { name: 'asc' } }, { lastName: 'asc' }],
+    });
+
+    const d = new Date(date + 'T00:00:00.000Z');
+    const next = new Date(d);
+    next.setUTCDate(next.getUTCDate() + 1);
+
+    const records = await this.prisma.attendance.findMany({
+      where: { date: { gte: d, lt: next }, studentId: { in: students.map((s) => s.id) } },
+    });
+    const byStudent = new Map(records.map((r) => [r.studentId, r]));
+
+    return students.map((s) => ({
+      student: {
+        id: s.id,
+        admissionNo: s.admissionNo,
+        firstName: s.firstName,
+        lastName: s.lastName,
+        classId: s.classId,
+        className: s.class?.name ?? null,
+      },
+      attendance: byStudent.get(s.id) ?? null,
+    }));
+  }
+
+  async mark(schoolId: string, dto: MarkAttendanceDto) {
+    const d = new Date(dto.date + 'T00:00:00.000Z');
+    return this.prisma.attendance.upsert({
+      where: { studentId_date: { studentId: dto.studentId, date: d } },
+      update: { status: dto.status, remarks: dto.remarks ?? null },
+      create: {
+        studentId: dto.studentId,
+        date: d,
+        status: dto.status,
+        remarks: dto.remarks ?? null,
+        recordedBy: schoolId,
+      },
+    });
+  }
+
+  async bulk(schoolId: string, dto: BulkAttendanceDto) {
+    const students = await this.prisma.student.findMany({
+      where: { schoolId, classId: dto.classId, isActive: true },
+      select: { id: true },
+    });
+    const d = new Date(dto.date + 'T00:00:00.000Z');
+    const results = await Promise.all(
+      students.map((s) =>
+        this.prisma.attendance.upsert({
+          where: { studentId_date: { studentId: s.id, date: d } },
+          update: { status: dto.status },
+          create: { studentId: s.id, date: d, status: dto.status, recordedBy: schoolId },
+        }),
+      ),
+    );
+    return { count: results.length, status: dto.status, date: dto.date };
+  }
+
+  async summary(schoolId: string, date: string) {
+    const d = new Date(date + 'T00:00:00.000Z');
+    const next = new Date(d);
+    next.setUTCDate(next.getUTCDate() + 1);
+    const records = await this.prisma.attendance.groupBy({
+      by: ['status'],
+      where: { date: { gte: d, lt: next }, student: { schoolId } },
+      _count: { _all: true },
+    });
+    const result: Record<string, number> = { PRESENT: 0, ABSENT: 0, LATE: 0, EXCUSED: 0 };
+    for (const r of records) result[r.status] = r._count._all;
+    return result;
+  }
+}
+`);
+
+// ---------- attendance controller ----------
+put('apps/api/src/attendance/attendance.controller.ts', `import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { AttendanceService } from './attendance.service';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { ZodValidationPipe } from '../common/pipes/zod.pipe';
+import {
+  markAttendanceSchema, bulkAttendanceSchema,
+  MarkAttendanceDto, BulkAttendanceDto,
+} from '@school/shared';
+
+@UseGuards(JwtAuthGuard)
+@Controller('attendance')
+export class AttendanceController {
+  constructor(private svc: AttendanceService) {}
+
+  @Get()
+  sheet(
+    @Req() req: any,
+    @Query('date') date: string,
+    @Query('classId') classId?: string,
+  ) {
+    const d = date || new Date().toISOString().slice(0, 10);
+    return this.svc.sheet(req.user.schoolId, d, classId);
+  }
+
+  @Get('summary')
+  summary(@Req() req: any, @Query('date') date: string) {
+    const d = date || new Date().toISOString().slice(0, 10);
+    return this.svc.summary(req.user.schoolId, d);
+  }
+
+  @Post()
+  mark(@Req() req: any, @Body(new ZodValidationPipe(markAttendanceSchema)) dto: MarkAttendanceDto) {
+    return this.svc.mark(req.user.schoolId, dto);
+  }
+
+  @Post('bulk')
+  bulk(@Req() req: any, @Body(new ZodValidationPipe(bulkAttendanceSchema)) dto: BulkAttendanceDto) {
+    return this.svc.bulk(req.user.schoolId, dto);
+  }
+}
+`);
+
+// ---------- attendance module ----------
+put('apps/api/src/attendance/attendance.module.ts', `import { Module } from '@nestjs/common';
+import { AttendanceService } from './attendance.service';
+import { AttendanceController } from './attendance.controller';
+
+@Module({
+  providers: [AttendanceService],
+  controllers: [AttendanceController],
+})
+export class AttendanceModule {}
+`);
+
+// ---------- app.module registration ----------
+put('apps/api/src/app.module.ts', `import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { PrismaModule } from './prisma/prisma.module';
+import { AuthModule } from './auth/auth.module';
+import { StudentsModule } from './students/students.module';
+import { FinanceModule } from './finance/finance.module';
+import { AttendanceModule } from './attendance/attendance.module';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../../.env'] }),
+    PrismaModule,
+    AuthModule,
+    StudentsModule,
+    FinanceModule,
+    AttendanceModule,
+  ],
+})
+export class AppModule {}
+`);
+
+// ---------- frontend page ----------
+const page = `'use client';
+import { useEffect, useMemo, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import { apiFetch } from '@/lib/api';
+
+type Status = 'PRESENT' | 'ABSENT' | 'LATE' | 'EXCUSED';
+type Row = {
+  student: {
+    id: string;
+    admissionNo: string;
+    firstName: string;
+    lastName: string;
+    classId: string | null;
+    className: string | null;
+  };
+  attendance: { id: string; status: Status } | null;
+};
+type Summary = Record<Status, number>;
+
+const STATUSES: Status[] = ['PRESENT', 'ABSENT', 'LATE', 'EXCUSED'];
+
+const STATUS_STYLE: Record<Status, string> = {
+  PRESENT: 'bg-green-100 text-green-800 border-green-300',
+  ABSENT: 'bg-red-100 text-red-800 border-red-300',
+  LATE: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+  EXCUSED: 'bg-blue-100 text-blue-800 border-blue-300',
+};
+
+export default function AttendancePage() {
+  const t = useTranslations('attendance');
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [classId, setClassId] = useState<string>('');
+  const [rows, setRows] = useState<Row[]>([]);
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      const qs = new URLSearchParams({ date });
+      if (classId) qs.set('classId', classId);
+      const [sheetR, sumR] = await Promise.all([
+        apiFetch('/api/v1/attendance?' + qs.toString()),
+        apiFetch('/api/v1/attendance/summary?date=' + date),
+      ]);
+      if (!sheetR.ok) throw new Error('sheet ' + sheetR.status);
+      if (!sumR.ok) throw new Error('summary ' + sumR.status);
+      const sheet = await sheetR.json();
+      const sum = await sumR.json();
+      setRows(Array.isArray(sheet) ? sheet : []);
+      setSummary(sum);
+      setErr(null);
+    } catch (e: any) {
+      setRows([]);
+      setErr(String(e));
+    }
+  };
+
+  useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
+    if (!token) return;
+    apiFetch('/api/v1/classes')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((c) => setClasses(Array.isArray(c) ? c : []))
+      .catch(() => setClasses([]));
+  }, []);
+
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [date, classId]);
+
+  const markOne = async (studentId: string, status: Status) => {
+    setSaving(studentId);
+    try {
+      const r = await apiFetch('/api/v1/attendance', {
+        method: 'POST',
+        body: JSON.stringify({ studentId, date, status }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await load();
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const markAllPresent = async () => {
+    if (!classId) {
+      setErr('Selectionnez une classe pour marquer tout le monde present.');
+      return;
+    }
+    setSaving('__all__');
+    try {
+      const r = await apiFetch('/api/v1/attendance/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ classId, date, status: 'PRESENT' }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await load();
+    } catch (e: any) {
+      setErr(String(e));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const presentPct = useMemo(() => {
+    if (!summary) return 0;
+    const total = STATUSES.reduce((s, k) => s + (summary[k] || 0), 0);
+    if (!total) return 0;
+    return Math.round(((summary.PRESENT + summary.LATE) / total) * 100);
+  }, [summary]);
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-2xl font-bold">{t('title')}</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="rounded border px-3 py-2 text-sm"
+          />
+          <select
+            value={classId}
+            onChange={(e) => setClassId(e.target.value)}
+            className="rounded border px-3 py-2 text-sm"
+          >
+            <option value="">{t('allClasses')}</option>
+            {classes.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <button
+            onClick={markAllPresent}
+            disabled={!classId || saving === '__all__'}
+            className="rounded bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {saving === '__all__' ? '...' : t('markAllPresent')}
+          </button>
+        </div>
+      </div>
+
+      {err && <p className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800">{err}</p>}
+
+      {summary && (
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <Stat label={t('present')} value={summary.PRESENT} tone="green" />
+          <Stat label={t('absent')} value={summary.ABSENT} tone="red" />
+          <Stat label={t('late')} value={summary.LATE} tone="yellow" />
+          <Stat label={t('excused')} value={summary.EXCUSED} tone="blue" />
+          <Stat label={t('rate')} value={presentPct + '%'} tone="brand" />
+        </div>
+      )}
+
+      <div className="mt-6 overflow-x-auto rounded-lg border">
+        <table className="w-full border-collapse text-sm">
+          <thead className="bg-gray-50 text-left">
+            <tr>
+              <th className="p-3 font-medium">{t('matricule')}</th>
+              <th className="p-3 font-medium">{t('name')}</th>
+              <th className="p-3 font-medium">{t('class')}</th>
+              <th className="p-3 font-medium">{t('status')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && !err && (
+              <tr><td colSpan={4} className="p-6 text-center text-gray-500">{t('noStudents')}</td></tr>
+            )}
+            {rows.map((r) => (
+              <tr key={r.student.id} className="border-t hover:bg-gray-50">
+                <td className="p-3 font-mono text-xs">{r.student.admissionNo}</td>
+                <td className="p-3">{r.student.firstName} {r.student.lastName}</td>
+                <td className="p-3">{r.student.className || '-'}</td>
+                <td className="p-3">
+                  <div className="flex flex-wrap gap-1">
+                    {STATUSES.map((s) => {
+                      const active = r.attendance?.status === s;
+                      return (
+                        <button
+                          key={s}
+                          disabled={saving === r.student.id}
+                          onClick={() => markOne(r.student.id, s)}
+                          className={
+                            'rounded border px-3 py-1 text-xs font-medium transition ' +
+                            (active
+                              ? STATUS_STYLE[s]
+                              : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50')
+                          }
+                        >
+                          {t(s.toLowerCase() as any)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: number | string; tone: 'green' | 'red' | 'yellow' | 'blue' | 'brand' }) {
+  const colors: Record<string, string> = {
+    green: 'border-green-200 bg-green-50 text-green-800',
+    red: 'border-red-200 bg-red-50 text-red-800',
+    yellow: 'border-yellow-200 bg-yellow-50 text-yellow-800',
+    blue: 'border-blue-200 bg-blue-50 text-blue-800',
+    brand: 'border-teal-200 bg-teal-50 text-teal-800',
+  };
+  return (
+    <div className={'rounded-xl border p-4 ' + colors[tone]}>
+      <div className="text-xs uppercase tracking-wide opacity-70">{label}</div>
+      <div className="mt-1 text-2xl font-bold">{value}</div>
+    </div>
+  );
+}
+`;
+put('apps/web/app/[locale]/dashboard/attendance/page.tsx', page);
+
+// ---------- i18n keys ----------
+const attendance = {
+  en: {
+    title: 'Attendance',
+    allClasses: 'All classes',
+    markAllPresent: 'Mark all present',
+    present: 'Present',
+    absent: 'Absent',
+    late: 'Late',
+    excused: 'Excused',
+    rate: 'Attendance rate',
+    matricule: 'Admission no',
+    name: 'Name',
+    class: 'Class',
+    status: 'Status',
+    noStudents: 'No students to display.',
+  },
+  fr: {
+    title: 'Presence',
+    allClasses: 'Toutes les classes',
+    markAllPresent: 'Marquer tous presents',
+    present: 'Present',
+    absent: 'Absent',
+    late: 'En retard',
+    excused: 'Excuse',
+    rate: 'Taux de presence',
+    matricule: 'Matricule',
+    name: 'Nom',
+    class: 'Classe',
+    status: 'Statut',
+    noStudents: 'Aucun eleve a afficher.',
+  },
+  ar: {
+    title: 'الحضور',
+    allClasses: 'جميع الفصول',
+    markAllPresent: 'تعيين الجميع حاضر',
+    present: 'حاضر',
+    absent: 'غائب',
+    late: 'متأخر',
+    excused: 'بعذر',
+    rate: 'نسبة الحضور',
+    matricule: 'رقم التسجيل',
+    name: 'الاسم',
+    class: 'الفصل',
+    status: 'الحالة',
+    noStudents: 'لا يوجد طلاب.',
+  },
+};
+for (const locale of ['en', 'fr', 'ar']) {
+  const file = join(root, 'apps/web/messages/' + locale + '.json');
+  const data = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+  data.attendance = { ...(data.attendance || {}), ...attendance[locale] };
+  writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+  console.log('  ~ apps/web/messages/' + locale + '.json (attendance keys)');
+}
+
+console.log('\n✅ Attendance module written');
