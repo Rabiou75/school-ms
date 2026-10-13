@@ -6,25 +6,15 @@ import SchoolLogo from '@/components/SchoolLogo';
 
 type NavKey =
   | 'dashboard' | 'students' | 'parents' | 'staff' | 'classes'
-  | 'subjects' | 'attendance' | 'exams' | 'finance' | 'timetable'
-  | 'library' | 'payroll' | 'import' | 'announcements' | 'settings';
+  | 'subjects' | 'timetable' | 'attendance' | 'exams' | 'finance'
+  | 'library' | 'payroll' | 'import' | 'announcements'
+  | 'settings' | 'help' | 'about';
 
 const NAV: NavKey[] = [
-  'dashboard',
-  'students',
-  'parents',
-  'staff',
-  'classes',
-  'subjects',
-  'timetable',
-  'attendance',
-  'exams',
-  'finance',
-  'library',
-  'payroll',
-  'import',
-  'announcements',
-  'settings',
+  'dashboard', 'students', 'parents', 'staff', 'classes', 'subjects',
+  'timetable', 'attendance', 'exams', 'finance',
+  'library', 'payroll', 'import', 'announcements',
+  'settings', 'help', 'about',
 ];
 
 const LABELS: Record<NavKey, { en: string; fr: string; ar: string }> = {
@@ -43,6 +33,8 @@ const LABELS: Record<NavKey, { en: string; fr: string; ar: string }> = {
   import:        { en: 'Bulk Import',   fr: 'Import en masse', ar: 'الاستيراد' },
   announcements: { en: 'Announcements', fr: 'Annonces',        ar: 'الإعلانات' },
   settings:      { en: 'Settings',      fr: 'Parametres',      ar: 'الإعدادات' },
+  help:          { en: 'Help',          fr: 'Aide',            ar: 'المساعدة' },
+  about:         { en: 'About',         fr: 'A propos',        ar: 'حول' },
 };
 
 const ICONS: Record<NavKey, string> = {
@@ -50,11 +42,18 @@ const ICONS: Record<NavKey, string> = {
   classes: '🏫', subjects: '📚', timetable: '📅', attendance: '✅',
   exams: '📝', finance: '💰', library: '📖', payroll: '💵',
   import: '📥', announcements: '📢', settings: '⚙️',
+  help: '❓', about: 'ℹ️',
 };
 
+const SECTION_BREAKS: NavKey[] = ['attendance', 'library', 'settings', 'help'];
+
 export default function DashboardLayout({
-  children, params: { locale },
-}: { children: React.ReactNode; params: { locale: string } }) {
+  children,
+  params: { locale },
+}: {
+  children: React.ReactNode;
+  params: { locale: string };
+}) {
   const l = locale === 'en' || locale === 'ar' ? locale : 'fr';
 
   return (
@@ -65,16 +64,23 @@ export default function DashboardLayout({
         </div>
         <nav className="p-3 space-y-1">
           {NAV.map((k) => (
-            <Link
-              key={k}
-              href={'/' + locale + '/dashboard' + (k === 'dashboard' ? '' : '/' + k)}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-            >
-              <span className="text-base">{ICONS[k]}</span>
-              <span>{LABELS[k][l]}</span>
-            </Link>
+            <div key={k}>
+              {SECTION_BREAKS.includes(k) && (
+                <div className="my-2 border-t border-gray-100" />
+              )}
+              <Link
+                href={'/' + locale + '/dashboard' + (k === 'dashboard' ? '' : '/' + k)}
+                className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              >
+                <span className="text-base">{ICONS[k]}</span>
+                <span>{LABELS[k][l]}</span>
+              </Link>
+            </div>
           ))}
         </nav>
+        <div className="p-3 text-center text-[10px] text-gray-400">
+          v1.1.0
+        </div>
       </aside>
       <div className="flex-1">
         <header className="flex h-16 items-center justify-between border-b bg-white px-6">

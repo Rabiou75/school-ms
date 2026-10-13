@@ -21,6 +21,7 @@ import { TimetableModule } from './timetable/timetable.module';
 import { LibraryModule } from './library/library.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { BulkImportModule } from './bulk-import/bulk-import.module';
+import { SystemModule } from './system/system.module';
 import { LogoController } from './settings/logo.controller';
 
 @Module({
@@ -32,6 +33,7 @@ import { LogoController } from './settings/logo.controller';
     PaymentsModule, SettingsModule, NotificationsModule,
     AnnouncementsModule, StudentPortalModule,
     TimetableModule, LibraryModule, PayrollModule, BulkImportModule,
+    SystemModule,
   ],
   controllers: [LogoController],
 })
