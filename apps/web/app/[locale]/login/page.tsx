@@ -85,11 +85,11 @@ export default function LoginPage({ params: { locale } }: { params: { locale: st
             </span>
             <span className="text-xs text-brand-600">→</span>
           </button>
-          <button type="button" disabled={loading} onClick={() => doLogin('admin@demo-school.cm', 'Admin@1234')}
+          <button type="button" disabled={loading} onClick={() => doLogin('parent@lby.cm', 'Parent@1234')}
             className="flex w-full items-center justify-between rounded-lg border border-amber-200 bg-white px-3 py-2 text-left text-sm hover:bg-gray-50 disabled:opacity-50">
             <span>
               <span className="block font-medium">Parent</span>
-              <span className="block font-mono text-[10px] text-gray-500">admin@demo-school.cm</span>
+              <span className="block font-mono text-[10px] text-gray-500">parent@lby.cm</span>
             </span>
             <span className="text-xs text-brand-600">→</span>
           </button>

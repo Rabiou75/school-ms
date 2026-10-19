@@ -1,6 +1,6 @@
-﻿appId: cm.schoolms.desktop
+appId: cm.schoolms.desktop
 productName: School MS
-copyright: Copyright 2026 School MS
+copyright: Copyright 2026 ETS IUTECH CONSULTING
 
 directories:
   output: dist
@@ -9,11 +9,17 @@ directories:
 files:
   - main.js
   - splash.html
+  - setup.html
+  - setup-preload.js
   - package.json
 
 extraResources:
+  - from: ../vendor/node
+    to: runtime/node
   - from: embed
     to: runtime
+  - from: build/vc_redist.x64.exe
+    to: vc_redist.x64.exe
 
 asar: false
 
@@ -23,21 +29,13 @@ win:
       arch: [x64]
     - target: portable
       arch: [x64]
-  artifactName: ${productName}-${version}-${arch}.${ext}
 
 nsis:
+  runAfterFinish: false
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: School MS
-
-
-
-
-
-
-
-
-
+  include: build/installer.nsh

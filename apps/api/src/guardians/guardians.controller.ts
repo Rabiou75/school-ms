@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { GuardiansService } from './guardians.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/pipes/zod.pipe';
 import {
   createGuardianSchema, updateGuardianSchema,
@@ -8,6 +9,7 @@ import {
 } from '@school/shared';
 
 @UseGuards(JwtAuthGuard)
+@Roles('SUPER_ADMIN', 'ADMIN', 'PRINCIPAL', 'ACCOUNTANT')
 @Controller('guardians')
 export class GuardiansController {
   constructor(private svc: GuardiansService) {}
@@ -18,9 +20,7 @@ export class GuardiansController {
   }
 
   @Get(':id')
-  get(@Param('id') id: string) {
-    return this.svc.get(id);
-  }
+  get(@Param('id') id: string) { return this.svc.get(id); }
 
   @Post()
   create(@Req() req: any, @Body(new ZodValidationPipe(createGuardianSchema)) dto: CreateGuardianDto) {
@@ -33,7 +33,5 @@ export class GuardiansController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.svc.remove(id);
-  }
+  remove(@Param('id') id: string) { return this.svc.remove(id); }
 }

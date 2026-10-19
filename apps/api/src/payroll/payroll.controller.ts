@@ -3,8 +3,10 @@ import { Response } from 'express';
 import { PayrollService } from './payroll.service';
 import { PayslipService } from './payslip.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @UseGuards(JwtAuthGuard)
+@Roles('SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT')
 @Controller('payroll')
 export class PayrollController {
   constructor(private svc: PayrollService, private payslip: PayslipService) {}

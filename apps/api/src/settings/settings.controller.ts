@@ -1,27 +1,31 @@
-import { Body, Controller, Get, Param, Post, Put, Req, UseGuards, Delete } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @UseGuards(JwtAuthGuard)
+@Roles('SUPER_ADMIN', 'ADMIN')
 @Controller('settings')
 export class SettingsController {
   constructor(private svc: SettingsService) {}
 
-  // --- School profile ---
+  // ---------- School profile ----------
+  // All authenticated users can read the school name + logo (used in the sidebar).
+  @Roles('SUPER_ADMIN', 'ADMIN', 'PRINCIPAL', 'TEACHER', 'ACCOUNTANT', 'LIBRARIAN', 'NURSE', 'TRANSPORT_MANAGER', 'HOSTEL_MANAGER', 'STUDENT', 'PARENT')
   @Get('school')
   getSchool(@Req() req: any) { return this.svc.getSchool(req.user.schoolId); }
 
   @Put('school')
   updateSchool(@Req() req: any, @Body() dto: any) { return this.svc.updateSchool(req.user.schoolId, dto); }
 
-  // --- Integrations ---
+  // ---------- Integrations ----------
   @Get('integrations')
   getIntegrations(@Req() req: any) { return this.svc.getIntegrations(req.user.schoolId); }
 
   @Put('integrations')
   saveIntegrations(@Req() req: any, @Body() dto: any) { return this.svc.saveIntegrations(req.user.schoolId, dto); }
 
-  // --- Users & roles ---
+  // ---------- Users & roles ----------
   @Get('users')
   listUsers(@Req() req: any) { return this.svc.listUsers(req.user.schoolId); }
 
@@ -45,18 +49,20 @@ export class SettingsController {
     return this.svc.resetUserPassword(id, body.newPassword);
   }
 
-  // --- My account ---
+  // ---------- My account (any authenticated user) ----------
+  @Roles('SUPER_ADMIN', 'ADMIN', 'PRINCIPAL', 'TEACHER', 'ACCOUNTANT', 'LIBRARIAN', 'NURSE', 'TRANSPORT_MANAGER', 'HOSTEL_MANAGER', 'STUDENT', 'PARENT')
   @Post('account/password')
   changeOwnPassword(@Req() req: any, @Body() body: { currentPassword: string; newPassword: string }) {
     return this.svc.changeOwnPassword(req.user.sub, body.currentPassword, body.newPassword);
   }
 
+  @Roles('SUPER_ADMIN', 'ADMIN', 'PRINCIPAL', 'TEACHER', 'ACCOUNTANT', 'LIBRARIAN', 'NURSE', 'TRANSPORT_MANAGER', 'HOSTEL_MANAGER', 'STUDENT', 'PARENT')
   @Put('account/profile')
   updateOwnProfile(@Req() req: any, @Body() dto: any) {
     return this.svc.updateOwnProfile(req.user.sub, dto);
   }
 
-  // --- Academic years ---
+  // ---------- Academic years ----------
   @Get('academic-years')
   listYears(@Req() req: any) { return this.svc.listAcademicYears(req.user.schoolId); }
 

@@ -1,10 +1,12 @@
 import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { StaffService } from './staff.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/pipes/zod.pipe';
 import { createStaffSchema, updateStaffSchema, CreateStaffDto, UpdateStaffDto } from '@school/shared';
 
 @UseGuards(JwtAuthGuard)
+@Roles('SUPER_ADMIN', 'ADMIN', 'PRINCIPAL')
 @Controller('staff')
 export class StaffController {
   constructor(private svc: StaffService) {}
@@ -23,7 +25,5 @@ export class StaffController {
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.svc.remove(id);
-  }
+  remove(@Param('id') id: string) { return this.svc.remove(id); }
 }

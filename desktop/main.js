@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
 const { spawn, fork } = require('node:child_process');
 const { existsSync, mkdirSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
@@ -54,17 +54,52 @@ function setSplashStatus(status) {
   }
 }
 
+// -------- First-run setup helper --------
+function httpGetJson(url) {
+  return new Promise((resolve) => {
+    const http = require('node:http');
+    http.get(url, (res) => {
+      let body = '';
+      res.on('data', (c) => body += c);
+      res.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } });
+    }).on('error', () => resolve(null));
+  });
+}
+
+function openSetupWindow() {
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      width: 560, height: 720,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      show: false,
+      autoHideMenuBar: true,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        preload: join(__dirname, 'setup-preload.js'),
+      },
+    });
+
+    win.loadFile(join(__dirname, 'setup.html'));
+    win.once('ready-to-show', () => win.show());
+
+    ipcMain.once('setup-done', () => {
+      log('main', 'Setup window completed');
+      win.close();
+      resolve();
+    });
+
+    win.on('closed', () => resolve());
+  });
+}
 // -------- Postgres --------
+// Always use the bundled PostgreSQL. Never reuse whatever happens to be
+// listening on 5432 ??? that instance may belong to another application
+// (e.g. rentdb) and will not have our schema/credentials.
 async function startPostgres() {
-  setSplashStatus('Checking database...');
-
-  const systemUp = await portOpen('localhost', 5432, 1000);
-  if (systemUp) {
-    log('main', 'Found system Postgres on 5432');
-    process.env.SCHOOL_PG_PORT = '5432';
-    return;
-  }
-
+  setSplashStatus('Starting database...');
   log('main', 'Starting bundled PostgreSQL');
   await startBundledPostgres();
 }
@@ -109,20 +144,21 @@ async function startBundledPostgres() {
   }
 
   setSplashStatus('Starting database...');
-  log('main', 'Starting Postgres on 55432');
+  log('main', 'Starting Postgres on ' + PG_PORT);
 
   await runProcess(pgCtl, [
     '-D', dataDir,
     '-l', logFile,
-    '-o', '-p 55432 -c listen_addresses=127.0.0.1',
+    '-o', '-p ' + PG_PORT + ' -c listen_addresses=127.0.0.1',
     '-w',
     'start',
   ], 'pg_ctl', 90000);
 
   for (let i = 0; i < 30; i++) {
-    if (await portOpen('127.0.0.1', 55432, 1000)) {
-      log('main', 'Postgres is up on 55432');
-      process.env.SCHOOL_PG_PORT = '55432';
+    if (await portOpen('127.0.0.1', PG_PORT, 1000)) {
+      log('main', 'Postgres is up on ' + PG_PORT);
+      process.env.SCHOOL_PG_PORT = String(PG_PORT);
+      process.env.SCHOOL_PG_HOST = '127.0.0.1';
       break;
     }
     await new Promise((r) => setTimeout(r, 500));
@@ -132,7 +168,7 @@ async function startBundledPostgres() {
     const out = await runProcess(psql, [
       '-U', 'school',
       '-h', '127.0.0.1',
-      '-p', '55432',
+      '-p', String(PG_PORT),
       '-d', 'postgres',
       '-tAc', "SELECT 1 FROM pg_database WHERE datname='school_ms'",
     ], 'psql-check', 15000);
@@ -142,7 +178,7 @@ async function startBundledPostgres() {
       await runProcess(psql, [
         '-U', 'school',
         '-h', '127.0.0.1',
-        '-p', '55432',
+        '-p', String(PG_PORT),
         '-d', 'postgres',
         '-c', 'CREATE DATABASE school_ms',
       ], 'psql-create', 15000);
@@ -167,7 +203,7 @@ function runProcess(exe, args, tag, timeoutMs) {
     p.on('exit', (code) => {
       clearTimeout(timer);
       if (stdout.trim()) log(tag, stdout.trim().slice(0, 500));
-      if (stderr.trim()) log(tag + ':err', stderr.trim().slice(0, 500));
+      if (stderr.trim()) log(tag + '_err', stderr.trim().slice(0, 500));
       if (code === 0) resolve(stdout);
       else reject(new Error(tag + ' exited ' + code));
     });
@@ -180,12 +216,20 @@ async function stopBundledPostgres() {
   const pgCtl = join(pgBin, 'pg_ctl.exe');
   const dataDir = join(USER_DATA, 'pgdata');
   if (!existsSync(pgCtl)) return;
+  if (!existsSync(join(dataDir, 'PG_VERSION'))) return;
   try {
     await runProcess(pgCtl, ['-D', dataDir, '-m', 'fast', '-w', 'stop'], 'pg_ctl-stop', 15000);
     log('main', 'Postgres stopped');
   } catch (e) {
     log('main', 'Postgres stop warning: ' + e.message);
   }
+}
+
+// -------- Helpers to build DATABASE_URL consistently --------
+function databaseUrl() {
+  const host = process.env.SCHOOL_PG_HOST || '127.0.0.1';
+  const port = process.env.SCHOOL_PG_PORT || String(PG_PORT);
+  return 'postgresql://school:school@' + host + ':' + port + '/school_ms?schema=public';
 }
 
 // -------- Run migrations + seed --------
@@ -198,19 +242,30 @@ async function migrateIfNeeded() {
 
   const env = {
     ...process.env,
-    DATABASE_URL: 'postgresql://school:school@' + (process.env.SCHOOL_PG_HOST || 'localhost') + ':' + (process.env.SCHOOL_PG_PORT || '5432') + '/school_ms?schema=public',
+    DATABASE_URL: databaseUrl(),
   };
 
-  // Migrate
-  if (existsSync(prismaCli) && existsSync(schemaPath)) {
-    log('main', 'Running prisma migrate deploy');
-    await runNode(prismaCli, ['migrate', 'deploy', '--schema', schemaPath], env, 'migrate');
-  } else {
-    log('main', 'Prisma CLI not found at ' + prismaCli);
+  // Fail loudly if the packaging is incomplete. Silent skip used to hide the
+  // real problem (missing Prisma CLI) and produced a cryptic "timeout waiting
+  // for port 4400" much later.
+  if (!existsSync(prismaCli)) {
+    throw new Error(
+      'Prisma CLI not found at ' + prismaCli +
+      '. The installer is missing the bundled Prisma CLI.'
+    );
+  }
+  if (!existsSync(schemaPath)) {
+    throw new Error(
+      'Prisma schema not found at ' + schemaPath +
+      '. The installer is missing @school/database/prisma.'
+    );
   }
 
-  // Seed (idempotent — safe to run every start)
-  if (existsSync(seedPath)) {
+  log('main', 'Running prisma migrate deploy');
+  await runNode(prismaCli, ['migrate', 'deploy', '--schema', schemaPath], env, 'migrate');
+
+  // Seed (idempotent ??? safe to run every start)
+  if (false && existsSync(seedPath)) {  // Disabled: wizard handles first-run setup
     log('main', 'Running seed');
     await runNode(seedPath, [], env, 'seed').catch((e) => log('main', 'Seed warning: ' + e.message));
   }
@@ -220,7 +275,7 @@ function runNode(scriptPath, args, env, tag) {
   return new Promise((resolve, reject) => {
     const p = fork(scriptPath, args, { env, silent: true, execArgv: [] });
     p.stdout?.on('data', (d) => log(tag, d.toString().trim()));
-    p.stderr?.on('data', (d) => log(tag + ':err', d.toString().trim()));
+    p.stderr?.on('data', (d) => log(tag + '_err', d.toString().trim()));
     p.on('exit', (code) => code === 0 ? resolve() : reject(new Error(tag + ' exited ' + code)));
     p.on('error', reject);
     setTimeout(() => { try { p.kill(); } catch {} ; reject(new Error(tag + ' timeout')); }, 120000);
@@ -242,19 +297,19 @@ async function startApi() {
       NODE_ENV: 'production',
       API_PORT: String(API_PORT),
       NODE_OPTIONS: '--dns-result-order=ipv4first',
-      DATABASE_URL: 'postgresql://school:school@' + (process.env.SCHOOL_PG_HOST || 'localhost') + ':' + (process.env.SCHOOL_PG_PORT || '5432') + '/school_ms?schema=public',
+      DATABASE_URL: databaseUrl(),
       JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'desktop_jwt_access_' + 'x'.repeat(20),
       JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'desktop_jwt_refresh_' + 'x'.repeat(20),
       JWT_ACCESS_TTL: '12h',
       JWT_REFRESH_TTL: '30d',
       UPLOAD_DIR: UPLOADS,
-          NODE_PATH: join(RUNTIME, 'node_modules'),
-},
+      NODE_PATH: join(RUNTIME, 'node_modules'),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   apiProc.stdout.on('data', (d) => log('api', d.toString().trim()));
-  apiProc.stderr.on('data', (d) => log('api:err', d.toString().trim()));
+  apiProc.stderr.on('data', (d) => log('api_err', d.toString().trim()));
   apiProc.on('exit', (code) => log('main', 'API exited with ' + code));
 
   await waitForPort(API_PORT, 60000);
@@ -272,7 +327,7 @@ async function startWeb() {
 
   if (!existsSync(entry)) throw new Error('Web entry missing. Looked at:\n' + webEntry + '\n' + fallback);
 
-  webProc = spawn(process.execPath, [entry], {
+  webProc = spawn(join(RESOURCES, 'runtime', 'node', 'node.exe'), [entry], {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: '1',
@@ -282,14 +337,14 @@ async function startWeb() {
       NODE_OPTIONS: '--dns-result-order=ipv4first',
       API_INTERNAL_URL: 'http://127.0.0.1:' + API_PORT,
       NEXT_PUBLIC_API_URL: 'http://127.0.0.1:' + API_PORT,
-          NODE_PATH: join(RUNTIME, 'node_modules'),
-},
-    cwd: join(RUNTIME, 'apps', 'web'),
+      NODE_PATH: join(RUNTIME, 'node_modules'),
+    },
+    cwd: join(RUNTIME, 'apps', 'web', '.next', 'standalone', 'apps', 'web'),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
   webProc.stdout.on('data', (d) => log('web', d.toString().trim()));
-  webProc.stderr.on('data', (d) => log('web:err', d.toString().trim()));
+  webProc.stderr.on('data', (d) => log('web_err', d.toString().trim()));
   webProc.on('exit', (code) => log('main', 'Web exited with ' + code));
 
   await waitForPort(WEB_PORT, 60000);
@@ -361,6 +416,15 @@ app.whenReady().then(async () => {
     await startPostgres();
     await migrateIfNeeded();
     await startApi();
+
+    // ---- First-run setup ----
+    const status = await httpGetJson('http://127.0.0.1:' + API_PORT + '/api/v1/system/setup-status');
+    if (status && status.needsSetup) {
+      setSplashStatus('Setting up administrator...');
+      await openSetupWindow();
+    }
+    // -------------------------
+
     await startWeb();
     createWindow();
   } catch (e) {
@@ -374,5 +438,5 @@ app.on('before-quit', async (e) => {
   log('main', 'Shutting down...');
   try { if (webProc) webProc.kill(); } catch {}
   try { if (apiProc) apiProc.kill(); } catch {}
-  // no embedded Postgres to stop
+  try { await stopBundledPostgres(); } catch (err) { log('main', 'Stop error: ' + err.message); }
 });

@@ -1,29 +1,40 @@
-node_modules
-.next
-dist
-dist-*
-.turbo
-coverage
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+desktop/dist/
+desktop/embed/
+apps/web/.next/
+packages/*/dist/
+
+# Large third-party binaries (do NOT commit to git)
+vendor/node/
+vendor/postgres/
+desktop/pg-binaries.zip
+desktop/pg-bundle/
+desktop/build/vc_redist.x64.exe
+
+# Environment variables
 .env
 .env.local
+.env.production
 .env.development.local
-.env.production.local
-*.log
-*.exe
-*.msi
-*.dmg
-*.tar.gz
-*.zip
-*.dump
-Final Deployement project/
-Final Deployment project/
-New Text Document.txt
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Lockfiles (keep pnpm-lock, ignore npm)
+package-lock.json
+
+# Newly discovered junk
+.turbo/
 backups/
-uploads/
-desktop/embed/
-desktop/pg-bundle/
-desktop/pg-binaries.zip
-desktop/pg-extract-tmp/
-desktop/dist/
 desktop/dist-*/
-desktop/node_modules/
+apps/api/uploads/
+*.bak
+New Text Document.txt
+*.mjs

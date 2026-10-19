@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>School MS Setup</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; padding: 20px; background: #f3f4f6; color: #111; margin: 0; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: #666; margin: 0 0 16px; font-size: 13px; }
+  label { display: block; font-size: 12px; font-weight: 600; margin-top: 12px; text-transform: uppercase; letter-spacing: .5px; color: #555; }
+  input, select { width: 100%; padding: 9px; margin-top: 4px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; background: white; }
+  input:focus, select:focus { outline: none; border-color: #0d9488; box-shadow: 0 0 0 3px rgba(13,148,136,.15); }
+  button { margin-top: 20px; width: 100%; padding: 12px; background: #0d9488; color: white; border: 0; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #error { color: #dc2626; margin-top: 10px; font-size: 13px; min-height: 18px; }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  hr { border: 0; border-top: 1px solid #e5e7eb; margin: 18px 0 4px; }
+  .section { font-size: 11px; font-weight: 700; color: #0d9488; text-transform: uppercase; letter-spacing: 1px; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>Set up School MS</h1>
+  <p class="sub">This creates the first administrator account. You can change these later in Settings.</p>
+  <form id="form">
+    <div class="section">School</div>
+    <label for="schoolName">School name</label>
+    <input id="schoolName" value="Demo Bilingual School" required>
+
+    <div class="row">
+      <div>
+        <label for="country">Country</label>
+        <select id="country">
+          <option value="CM" selected>Cameroon (CM)</option>
+          <option value="NG">Nigeria (NG)</option>
+          <option value="GH">Ghana (GH)</option>
+          <option value="SN">Senegal (SN)</option>
+          <option value="CI">C?te d'Ivoire (CI)</option>
+          <option value="FR">France (FR)</option>
+          <option value="US">United States (US)</option>
+          <option value="GB">United Kingdom (GB)</option>
+        </select>
+      </div>
+      <div>
+        <label for="currency">Currency</label>
+        <select id="currency">
+          <option value="XAF" selected>XAF (FCFA)</option>
+          <option value="XOF">XOF (FCFA)</option>
+          <option value="NGN">NGN (?)</option>
+          <option value="GHS">GHS (?)</option>
+          <option value="EUR">EUR (?)</option>
+          <option value="USD">USD ($)</option>
+          <option value="GBP">GBP (?)</option>
+        </select>
+      </div>
+    </div>
+
+    <label for="defaultLocale">Default language</label>
+    <select id="defaultLocale">
+      <option value="fr" selected>Fran?ais</option>
+      <option value="en">English</option>
+      <option value="ar">???????</option>
+    </select>
+
+    <hr>
+    <div class="section">Administrator</div>
+    <div class="row">
+      <div>
+        <label for="firstName">First name</label>
+        <input id="firstName" value="Super" required>
+      </div>
+      <div>
+        <label for="lastName">Last name</label>
+        <input id="lastName" value="Admin" required>
+      </div>
+    </div>
+
+    <label for="email">Email (this is your login)</label>
+    <input id="email" type="email" value="admin@demo-school.cm" required>
+
+    <label for="password">Password (min 8 characters)</label>
+    <input id="password" type="password" value="Admin@1234" minlength="8" required>
+
+    <button id="submit" type="submit">Create administrator account</button>
+    <div id="error"></div>
+  </form>
+
+  <script>
+    const form = document.getElementById('form');
+    const btn = document.getElementById('submit');
+    const err = document.getElementById('error');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      btn.disabled = true;
+      err.textContent = '';
+
+      const payload = {
+        schoolName:     document.getElementById('schoolName').value.trim(),
+        country:        document.getElementById('country').value,
+        currency:       document.getElementById('currency').value,
+        defaultLocale:  document.getElementById('defaultLocale').value,
+        adminFirstName: document.getElementById('firstName').value.trim(),
+        adminLastName:  document.getElementById('lastName').value.trim(),
+        adminEmail:     document.getElementById('email').value.trim(),
+        adminPassword:  document.getElementById('password').value,
+      };
+
+      try {
+        const res = await fetch('http://127.0.0.1:4400/api/v1/system/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        window.setupBridge.done();
+      } catch (e) {
+        err.textContent = String(e.message || e);
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { FinanceService } from './finance.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { ZodValidationPipe } from '../common/pipes/zod.pipe';
 import {
   createFeeSchema, createInvoiceSchema, recordPaymentSchema,
@@ -8,6 +9,7 @@ import {
 } from '@school/shared';
 
 @UseGuards(JwtAuthGuard)
+@Roles('SUPER_ADMIN', 'ADMIN', 'PRINCIPAL', 'ACCOUNTANT')
 @Controller('finance')
 export class FinanceController {
   constructor(private svc: FinanceService) {}

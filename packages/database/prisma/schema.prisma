@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows"]
 }
 
 datasource db {
@@ -282,7 +283,6 @@ model Message {
   school School @relation(fields: [schoolId], references: [id])
 }
 
-
 enum AttendanceStatus {
   PRESENT
   ABSENT
@@ -362,7 +362,6 @@ model Mark {
   @@index([studentId])
 }
 
-
 model SchoolSetting {
   id        String   @id @default(cuid())
   schoolId  String
@@ -374,7 +373,6 @@ model SchoolSetting {
 
   @@unique([schoolId, key])
 }
-
 
 model Notification {
   id        String    @id @default(cuid())
@@ -393,7 +391,6 @@ model Notification {
   @@index([userId, readAt])
   @@index([userId, createdAt])
 }
-
 
 model NotificationLog {
   id         String   @id @default(cuid())
